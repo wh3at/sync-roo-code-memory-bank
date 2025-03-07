@@ -1,63 +1,60 @@
-﻿# エラーハンドリングを有効化
-param(
+﻿param(
     [Parameter(Mandatory=$false)]
     [string]$TargetDir = "."
 )
 
+# エラーハンドリングの設定
 $ErrorActionPreference = "Stop"
 
-# スクリプトが閉じないようにするための設定（スクリプトの先頭部分）
-if ($Host.Name -eq "ConsoleHost") {
-    Write-Host "スクリプトを実行しています。終了するにはプロンプトでEnterキーを押してください..." -ForegroundColor Yellow
-    Start-Sleep -Seconds 1
-}
-else {
-    # コンソールホスト以外（例：ダブルクリック実行時）はコンソールウィンドウで再実行
-    try {
-        $scriptPath = $MyInvocation.MyCommand.Path
-        if ($scriptPath) {
-            Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$scriptPath`"" -Wait
-            exit
+# 関数: 環境の初期化と検証
+function Initialize-Environment {
+    param (
+        [string]$Directory
+    )
+    
+    if (!(Test-Path -Path $Directory)) {
+        try {
+            New-Item -ItemType Directory -Path $Directory -Force
+            Write-Host "指定されたディレクトリを作成しました: $Directory" -ForegroundColor Green
+        }
+        catch {
+            throw "ディレクトリの作成に失敗しました: $_"
         }
     }
-    catch {
-        # 再起動の試みが失敗した場合は通常通り続行
-        Write-Host "注意: コンソールモードで実行できませんでした。ウィンドウが閉じる場合があります。" -ForegroundColor Red
+
+    # スクリプトが閉じないようにするための設定
+    if ($Host.Name -eq "ConsoleHost") {
+        Write-Host "スクリプトを実行しています。終了するにはプロンプトでEnterキーを押してください..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 1
+    }
+    else {
+        try {
+            $scriptPath = $MyInvocation.MyCommand.Path
+            if ($scriptPath) {
+                Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `"$scriptPath`"" -Wait
+                exit
+            }
+        }
+        catch {
+            Write-Host "注意: コンソールモードで実行できませんでした。ウィンドウが閉じる場合があります。" -ForegroundColor Red
+        }
     }
 }
 
-# エラーハンドリングを有効化
-$ErrorActionPreference = "Stop"
-
-# ターゲットディレクトリの存在確認と作成
-if (!(Test-Path -Path $TargetDir)) {
-    try {
-        New-Item -ItemType Directory -Path $TargetDir -Force
-        Write-Host "指定されたディレクトリを作成しました: $TargetDir" -ForegroundColor Green
-    }
-    catch {
-        Write-Host "ディレクトリの作成に失敗しました: $_" -ForegroundColor Red
-        exit 1
-    }
-}
-
-# エラー発生時にも処理を継続するためのトライキャッチブロックをメインに設定
-try {
-    # リポジトリ情報
-    $RepoOwner = "GreatScottyMac"
-    $RepoName = "roo-code-memory-bank"
-    $Branch = "main"
-
-    # ダウンロード先ディレクトリ（カレントディレクトリの場合は '.' を指定）
-    $TargetDir = "."
+# 関数: READMEからテーブル情報を解析
+function Get-TableFromReadme {
+    param (
+        [string]$RepoOwner,
+        [string]$RepoName,
+        [string]$Branch
+    )
 
     Write-Host "README.md からテーブル形式のファイルリンクを取得中..." -ForegroundColor Cyan
 
-    # README.md をダウンロード
     $ReadmeUrl = "https://raw.githubusercontent.com/$RepoOwner/$RepoName/$Branch/README.md"
     $ReadmeContent = Invoke-WebRequest -Uri $ReadmeUrl -UseBasicParsing | Select-Object -ExpandProperty Content
 
-    # テーブル部分を抽出
+    # テーブル解析
     $TableLines = @()
     $CaptureTable = $false
     $TableStartPattern = '\| Mode \| Rule File \|'
@@ -72,7 +69,6 @@ try {
             $TableLines += $line
         }
         
-        # 空行を見つけたらテーブル終了
         if ($CaptureTable -and $line -match $TableEndPattern) {
             break
         }
@@ -81,12 +77,18 @@ try {
     # ヘッダー行とヘッダー区切り行をスキップ
     $TableData = $TableLines | Select-Object -Skip 2
 
-    # ファイルリンクとファイル名を格納する配列
-    $FileLinks = @()
-    $FileNames = @()
+    return $TableData
+}
+
+# 関数: テーブルデータからファイル情報を抽出
+function Get-FileInformation {
+    param (
+        [array]$TableData
+    )
+
+    $FileInfo = @()
 
     foreach ($line in $TableData) {
-        # Markdown の表から [タイトル](リンク) 形式のリンクを抽出
         if ($line -match '\|\s*\[`(.+?)`\]\((.+?)\)') {
             $fileName = $matches[1]
             $fileLink = $matches[2]
@@ -94,49 +96,71 @@ try {
             # GitHub のリンクを raw コンテンツリンクに変換
             $rawLink = $fileLink -replace 'github\.com', 'raw.githubusercontent.com' -replace '/blob/', '/'
             
-            $FileLinks += $rawLink
-            $FileNames += $fileName
+            $FileInfo += @{
+                Name = $fileName
+                Url = $rawLink
+            }
         }
     }
 
-    if ($FileLinks.Count -eq 0) {
-        Write-Host "警告: テーブルからファイルリンクを取得できませんでした。" -ForegroundColor Yellow
-        throw "ファイルリンクが見つかりませんでした"
+    if ($FileInfo.Count -eq 0) {
+        throw "テーブルからファイルリンクを取得できませんでした"
     }
-    else {
-        Write-Host "テーブルから取得したファイルリンク数: $($FileLinks.Count)" -ForegroundColor Green
-    }
+
+    Write-Host "テーブルから取得したファイルリンク数: $($FileInfo.Count)" -ForegroundColor Green
+    return $FileInfo
+}
+
+# 関数: ファイルのダウンロード
+function Download-Files {
+    param (
+        [array]$FileInfo,
+        [string]$OutputDirectory
+    )
 
     Write-Host "GitHubリポジトリからファイルをダウンロードします..." -ForegroundColor Cyan
-
-    # 各ファイルをダウンロード
-    $errorOccurred = $false
     $errorMessages = @()
 
-    for ($i = 0; $i -lt $FileLinks.Count; $i++) {
-        $link = $FileLinks[$i]
-        $name = $FileNames[$i]
+    foreach ($file in $FileInfo) {
+        Write-Host "ダウンロード中: $($file.Name)" -ForegroundColor Cyan
+        Write-Host "  リンク: $($file.Url)" -ForegroundColor Gray
         
-        Write-Host "ダウンロード中: $name" -ForegroundColor Cyan
-        Write-Host "  リンク: $link" -ForegroundColor Gray
-        
-        # ファイルをダウンロード
         try {
-            Invoke-WebRequest -Uri $link -OutFile "$TargetDir\$name" -UseBasicParsing
+            Invoke-WebRequest -Uri $file.Url -OutFile "$OutputDirectory\$($file.Name)" -UseBasicParsing
             
-            if (Test-Path "$TargetDir\$name") {
-                Write-Host "? $name を正常にダウンロードしました" -ForegroundColor Green
+            if (Test-Path "$OutputDirectory\$($file.Name)") {
+                Write-Host "✓ $($file.Name) を正常にダウンロードしました" -ForegroundColor Green
             }
         }
         catch {
-            $errorOccurred = $true
-            $errorMsg = "?? $name のダウンロードに失敗しました: $_"
+            $errorMsg = "✗ $($file.Name) のダウンロードに失敗しました: $_"
             $errorMessages += $errorMsg
             Write-Host $errorMsg -ForegroundColor Red
         }
     }
 
-   if ($errorOccurred) {
+    return $errorMessages
+}
+
+# メイン処理
+try {
+    # 環境の初期化
+    Initialize-Environment -Directory $TargetDir
+
+    # リポジトリ情報
+    $RepoOwner = "GreatScottyMac"
+    $RepoName = "roo-code-memory-bank"
+    $Branch = "main"
+
+    # テーブルデータの取得と解析
+    $TableData = Get-TableFromReadme -RepoOwner $RepoOwner -RepoName $RepoName -Branch $Branch
+    $FileInfo = Get-FileInformation -TableData $TableData
+
+    # ファイルのダウンロード
+    $ErrorMessages = Download-Files -FileInfo $FileInfo -OutputDirectory $TargetDir
+
+    # 結果の表示
+    if ($ErrorMessages.Count -gt 0) {
         Write-Host "`n一部のファイルのダウンロードに問題がありました。上記のエラーメッセージを確認してください。" -ForegroundColor Yellow
     } else {
         Write-Host "`nすべてのファイルのダウンロードが完了しました" -ForegroundColor Green
@@ -146,10 +170,8 @@ catch {
     Write-Host "`n処理中にエラーが発生しました: $_" -ForegroundColor Red
 }
 finally {
-    # スクリプトの終了時点で一時停止して、ユーザーがエラーメッセージを確認できるようにする
+    # スクリプトの終了時点で一時停止
     Write-Host "`n処理が完了しました。Enterキーを押すと終了します..." -ForegroundColor Magenta
-    
-    # より確実な一時停止方法（複数の方法を組み合わせて確実に停止させる）
     cmd /c pause > $null
     Read-Host "続行するにはEnterキーを押してください" > $null
 }
