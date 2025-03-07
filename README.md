@@ -7,7 +7,7 @@
 ## 使用方法
 
 ```powershell
-.\sync_roo_code_memory_bank.ps1 [-TargetDir <ダウンロード先ディレクトリ>]
+powershell -ExecutionPolicy Bypass -File sync_roo_code_memory_bank.ps1 [-TargetDir "<ダウンロード先ディレクトリ>"]
 ```
 
 ### パラメータ
