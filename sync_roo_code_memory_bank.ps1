@@ -1,4 +1,9 @@
 ﻿# エラーハンドリングを有効化
+param(
+    [Parameter(Mandatory=$false)]
+    [string]$TargetDir = "."
+)
+
 $ErrorActionPreference = "Stop"
 
 # スクリプトが閉じないようにするための設定（スクリプトの先頭部分）
@@ -20,11 +25,6 @@ else {
         Write-Host "注意: コンソールモードで実行できませんでした。ウィンドウが閉じる場合があります。" -ForegroundColor Red
     }
 }
-
-param(
-    [Parameter(Mandatory=$false)]
-    [string]$TargetDir = "."
-)
 
 # エラーハンドリングを有効化
 $ErrorActionPreference = "Stop"
